@@ -1,0 +1,227 @@
+---
+title: "Virulence Prediction Challenge 3.0 (virpred3.0)"
+subtitle: "Report to complete"
+author: "Florent Chuffart & Magali Richard"
+date: "`r Sys.Date()`"
+output:
+  rmarkdown::html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+---
+
+```{r, echo=FALSE, eval=TRUE}
+knitr::opts_chunk$set(collapse=TRUE, comment = "#>", fig.width=9, fig.height=6, eval=TRUE, echo=FALSE, results="hide")
+``` 
+
+This document is a guide to help you solving the *data challenge* `virpred3.0` available here : 
+
+ https://competitions.codalab.org/competitions/28103?secret_key=fcd00f30-4767-45cf-b84a-48f31425d7f5
+
+The challenge provides two data.frames (data_test and data_train) of low grade glioma samples described by sex, age, histology, survival (3 columns), genes expression and DNA methylation values (multi-omics). The goal of this challenge is to predict the 3-year overall survival (`dead_at_censor_months` variable). The survival informations are described by 3 variables:
+
+-`os_months`: overall survival months, the length of time from the date of diagnosis that patients diagnosed with the disease are either dead, or censored (still alive when the follow up ends). Quantitative variable
+-`dead`: is the patient dead at os-months time? Boolean variable
+-`dead_at_censor_months`: is the patient dead at censor time (36 months after the diagnosis)? Boolean variable.
+
+Note: Some `dead_at_censor_months` value are missing in the training dataset, corresponding to patients that left the study before the 36th month of follow-up.
+
+The goal of the challenge is to use statistical or machine learning models (e.g. logistic regression, random forest, support vector machines) to predict the 3-year survival using provided multi-omics and clinical observations (i.e. the `dead_at_censor_months` column of test set).
+
+The provided data are data frames named data_train and data_test.
+
+- the train data set is composed of 408 observations and 2006 variables (6 clinical variables, 1000 gene expression and 1000 methylation probes)
+
+- the test data set is composed of 100 observations and 2006 variables (6 clinical variables, 1000 gene expressions  and 1000 methylation probes).
+
+# Descriptive statistics
+
+**Dataset `data_train`**
+
+```{r loading_data, echo=TRUE, results="verbatim"}
+data_train = readRDS(file = "data_train.rds")
+data_test = readRDS(file = "data_test.rds")
+dim(data_train)
+dim(data_test)
+head(data_train[,1:6])
+head(data_test[,1:6])
+table(data_train$sex)
+table(data_train$histology)
+table(data_train$dead_at_censor_months)
+table(data_train$dead)
+```
+
+```{r}
+head(data_train)
+```
+
+**Distribution de l’expression de l'histologie (en fonction du sexe) dans la `data_train`**
+```{r}
+library(ggplot2)
+histology = as.numeric(factor(data_train$histology))
+#layout(matrix(1:2, 1), respect=TRUE)
+
+ggplot(data_train, aes(x=as.numeric(factor(histology)), color=sex)) +
+  geom_density() +
+  xlim(0,3)
+# Ajouter les moyennes
+```
+
+
+
+# Define your model using the training set
+
+## Mathematical approaches
+
+### Logistic regression
+
+We consider a relation between a binary variable $Y$ and a quantitative explanatory variable $X$. We try to model: 
+
+$$Y \sim X$$
+
+$$\mathbb{E}(Y|X) = \mathbb{P}(Y=1|X=x) = \pi (x)$$
+
+The logistic regression relies on the use of the *logit* function as link function:
+
+\begin{eqnarray}
+\text{logit: } ]0,1[ &\rightarrow& \mathbb{R}                  &\qquad& \lim_{x\to0} logit(x) &=& -\infty  \hspace{12cm}\\
+                   x &\rightarrow& logit(x)=log(\frac{x}{1-x}) &\qquad& \lim_{x\to1} logit(x) &=& +\infty  \hspace{12cm}\\
+\end{eqnarray}
+
+\begin{eqnarray}
+\text{logit$^{-1}$: } \mathbb{R} &\rightarrow& ]0,1[                            &\qquad& \lim_{x\to-\infty} logit^{-1}(x) &=& 0\\
+\hspace{12cm}                                x &\rightarrow& logit^{-1}(x)=\frac{1}{1+e^{-x}} &\qquad& \lim_{x\to+\infty} logit^{-1}(x) &=& 1\\
+\end{eqnarray}
+
+We consider the logistic model in which $\pi(x) = logit^{-1}(\beta_0 + \beta_1 x)$ :
+
+$$\mathbb{P}(Y=1|x) = \pi(x) = logit^{-1}(\beta_0 + \beta_1 x)$$ 
+
+1. Use the following code to build a univariate model of 3-year overall survival according to one gene expression: $dead \sim gene$
+
+```{r, echo=TRUE, results="verbatim"}
+g = colnames(data_train)[7] #select your gene of interest 
+print(g)
+formula = as.formula(paste0("dead_at_censor_months~",g)) 
+m = glm(formula, data_train, family =binomial(link = 'logit'))
+summary(m)
+```
+
+2. Edit the previous code to build a univariate model of 3-year overall survival according to one methylation probe: $dead \sim met$
+
+3. Edit the following code to perform multiple univariate logistic regressions for all genes and all methylation probes to find the best models (according to associated p-value or deviance) ($gene_1, gene_2, gene_3, ..., met_1, met_2, met_3, ... $). You can vizualise your result using two **volcano plot** of your screening (one for genes, one for methylation probes): on the abscissa we plot the beta of each independent model and on the ordinate the corresponding $-log10 (pval)$.
+
+```{r, echo=TRUE, results="verbatim"}
+feature = colnames(data_train)[7]
+formula = as.formula(paste0("dead_at_censor_months~",feature)) 
+m = glm(formula, data_train, family =binomial(link = 'logit'))
+pval = summary(m)$coefficients[2,4]
+beta = m$coefficients[[2]]
+dev = summary(m)$deviance
+```
+
+4. Construct a multivariate model with the best gene candidates obtained with the stepwise approach. We will take advantage of the * step forward * variable selection method to select genes that provide “new” information. Indeed, we are going to start from the null model and add one by one the genes, among the 50 best genes obtained thanks to univariate method, which considerably increase the quality of the model. Compare the AIC of the model with 50 variable compared to the model with the genes selected by the stepwise approach.
+
+```{r , echo=TRUE, results="verbatim",results="hide", warning = FALSE}
+features = colnames(data_train)[7:57] #select your 50 best genes
+
+stepforward = function(data_train, features, trace) {
+  m_lo = glm(dead_at_censor_months ~ 1, 
+             data=data_train[,c("dead_at_censor_months", features)],
+              family =binomial(link = 'logit'))
+  m_up = glm(dead_at_censor_months ~ ., 
+             data=data_train[,c("dead_at_censor_months", features)],
+              family =binomial(link = 'logit'))
+  m_fwd = step(m_lo, method="forward", scope=list(upper=m_up,lower=m_lo), trace=trace)  
+  # print(m_fwd$call)
+  step_genes = names(m_fwd$coefficients)[-1]
+}
+
+step_genes = stepforward(data_train, features, trace=1)
+step_genes
+
+formula = as.formula(paste0(c("dead_at_censor_months~1",features),collapse="+"))
+m_50features = glm(formula, data_train, family =binomial(link = 'logit'))  
+
+formula = as.formula(paste0(c("dead_at_censor_months~1",step_genes),collapse="+")) 
+m_step_genes = glm(formula, data_train, family =binomial(link = 'logit'))  
+```
+
+### Cox model
+
+1. Use the following code to build a univariate model of survival according to one gene expression: $survival \sim gene$
+
+```{r, echo=TRUE, results="verbatim"}
+var = colnames(data_train)[121] #select your gene of interest 
+print(var)
+
+mcox = survival::coxph(formula(paste0("ss~", paste(var, collapse = "+"))), 
+                       data=cbind(data_train, ss=survival::Surv(time=data_train[,"os_months"], event=data_train[,"dead"])))
+summary(mcox)
+```
+
+2. Perform the same analysis than for the logistic regression models (univariate on genes and methylation, multivariate with the stepwise approach)
+
+# Use your model to predict the 3-years survival on the test set
+
+1. Use the function predict to make a prediction of survival on the `test dataset` using your logistic model.
+
+```{r, echo=TRUE, results="verbatim"}
+var = colnames(data_train)[121] #select your gene of interest 
+formula = as.formula(paste0("dead_at_censor_months~",var)) 
+m = glm(formula, data_train, family =binomial(link = 'logit'))
+pred = predict.glm(m, data_test, type="response")
+
+threshold = 0.5 # you can change the threshold
+
+data_pred = ifelse(pred<threshold, levels(data_train[["dead_at_censor_months"]])[1], levels(data_train[["dead_at_censor_months"]])[2])
+data_pred
+```
+
+2. Use the function predict to make a prediction of survival on the `test dataset` using your cox model.
+
+```{r, echo=TRUE, results="verbatim"}
+var = colnames(data_train)[121] #select your gene of interest 
+mcox = survival::coxph(formula(paste0("ss~", paste(var, collapse = "+"))), data=cbind(data_train, ss=survival::Surv(time=data_train[,"os_months"], event=data_train[,"dead"])))
+# predict
+surv = survival::survfit(mcox, newdata=data_test[,c(var, "sex")], start.time=0)
+pred = surv$surv[which(abs(surv$time - 36) == min(abs(surv$time - 36)))[1],]
+data_pred = ifelse(pred>0.5, levels(data_train[["dead_at_censor_months"]])[1], levels(data_train[["dead_at_censor_months"]])[2])
+data_pred
+```
+
+2. Edit the `submission_script.R` script to update it with your favorite model. Generate a program or result .zip file and submit it to the codalab platform to get your error score
+
+3. Try to improve your score
+
+# How to improve feature selection for multimodal models?
+
+You can explore the following approaches: 
+
+## Single omics or concatenated multi-omics
+
+- Principal Component Analysis
+- Independant Component analysis
+- Generalized Boosted Regression Models (GBM)
+
+## Joint dimentionality reduction
+
+- Canonical Correlation Analysis (CCA): For instance RGCCA (R package `RGCCA`), DIABLO (R package `mixomics`)
+- Factor Analysis (FA): For instance (R package `MOFA`) 
+
+# How to improve classification?
+
+You can explore the following Machine Learning classification approaches: 
+
+- Penalized regression (lasso, ridge, elastic net). You can try `caret::glmnet`.
+- Neural network. Try to use the function `nnet::nnet`.
+- Support Vector Machine. Try to use the function `e1071::svm`.
+- Random Forest. Try to use the function `randomForest::randomForest`.
+- Support Vector Classification (SVC). You can try the R package `LiblineaR`.
+
+# R Session Information
+
+```{r, results="verbatim"}
+sessionInfo()
+```
